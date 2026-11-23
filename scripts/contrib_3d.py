@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import sys
 import urllib.request
@@ -26,12 +25,15 @@ MIN_HEIGHT, MAX_HEIGHT = 1.5, 46
 MARGIN = 18
 TITLE_SPACE = 22
 
-SNAKE_COLOR = "#ff3df2"
-SNAKE_CORE = "#ffd6fb"
-SNAKE_LENGTH = 120
-SNAKE_SPEED = 140
-WAVE_PERIOD = 5
+RISE_DELAY = 0.3
+RISE_STEP = 0.025
+RISE_DURATION = 1.2
+WAVE_PERIOD = 6
 WAVE_STEP = 0.045
+SPARK_CELLS = 8
+SPARK_PERIOD = 2.8
+EASE_OUT = "0.2 0.8 0.2 1"
+
 
 def fetch_calendar(login, token):
     request = urllib.request.Request(
@@ -61,52 +63,13 @@ def points(*corners):
     return " ".join(f"{x:.1f},{y:.1f}" for x, y in corners)
 
 
-def snake_route(cells):
-    targets = sorted(cell for cell, (count, _) in cells.items() if count)
-    if not targets:
-        return []
-    route = [targets[0]]
-    remaining = set(targets[1:])
-    while remaining:
-        week, day = route[-1]
-        target = min(remaining, key=lambda c: (abs(c[0] - week) + abs(c[1] - day), c))
-        remaining.remove(target)
-        while (week, day) != target:
-            if week != target[0]:
-                week += 1 if target[0] > week else -1
-            else:
-                day += 1 if target[1] > day else -1
-            route.append((week, day))
-    week, day = route[-1]
-    start = route[0]
-    while (week, day) != start:
-        if day != start[1]:
-            day += 1 if start[1] > day else -1
-        else:
-            week += 1 if start[0] > week else -1
-        route.append((week, day))
-    return route
-
-
-def cubic_point(p0, c1, c2, p1, t):
-    u = 1 - t
-    return tuple(u ** 3 * a + 3 * u * u * t * b + 3 * u * t * t * c + t ** 3 * d for a, b, c, d in zip(p0, c1, c2, p1))
-
-
-def smooth_path(route_points):
-    count = len(route_points)
-    commands = [f"M{route_points[0][0]:.1f},{route_points[0][1]:.1f}"]
-    distances = [0.0]
-    for i in range(count - 1):
-        before = route_points[i - 1] if i else route_points[-2]
-        start, end = route_points[i], route_points[i + 1]
-        after = route_points[i + 2] if i + 2 < count else route_points[1]
-        c1 = tuple(s + (e - b) / 6 for s, e, b in zip(start, end, before))
-        c2 = tuple(e - (a - s) / 6 for s, e, a in zip(start, end, after))
-        commands.append(f"C{c1[0]:.1f},{c1[1]:.1f} {c2[0]:.1f},{c2[1]:.1f} {end[0]:.1f},{end[1]:.1f}")
-        samples = [cubic_point(start, c1, c2, end, step / 12) for step in range(13)]
-        distances.append(distances[-1] + sum(math.dist(a, b) for a, b in zip(samples, samples[1:])))
-    return " ".join(commands), distances
+def rising_polygon(fill, flat, full, delay, extra=""):
+    duration = delay + RISE_DURATION
+    return (
+        f'<polygon fill="{fill}"{extra} points="{full}">'
+        f'<animate attributeName="points" values="{flat};{flat};{full}" keyTimes="0;{delay / duration:.3f};1" '
+        f'calcMode="spline" keySplines="0 0 1 1;{EASE_OUT}" dur="{duration:.2f}s"/></polygon>'
+    )
 
 
 def render(calendar):
@@ -117,8 +80,8 @@ def render(calendar):
     }
     counts = sorted(count for count, _ in cells.values() if count)
     peak = counts[int(len(counts) * 0.95)] if counts else 1
-    heights = {cell: bar_height(count, level, peak) for cell, (count, level) in cells.items()}
     weeks = len(calendar["weeks"])
+    rise_end = RISE_DELAY + weeks * RISE_STEP + RISE_DURATION
 
     origin_x = MARGIN + 7 * DAY_DX
     origin_y = MARGIN + TITLE_SPACE + MAX_HEIGHT
@@ -131,61 +94,49 @@ def render(calendar):
             origin_y + week * WEEK_DY + day * DAY_DY - z,
         )
 
-    route = snake_route(cells)
-    route_points = [project(w + 0.5, d + 0.5, heights.get((w, d), MIN_HEIGHT) + 2) for w, d in route]
-    path, distances = smooth_path(route_points)
-    total_distance = distances[-1] or 1
-    duration = total_distance / SNAKE_SPEED
-    arrival = {}
-    for cell, distance in zip(route, distances):
-        arrival.setdefault(cell, distance / total_distance)
-
     shapes = []
     for (week, day), (count, level) in sorted(cells.items(), key=lambda c: (c[0][0] + c[0][1], c[0][0])):
-        z = heights[(week, day)]
+        z = bar_height(count, level, peak)
         back = project(week, day)
         right = project(week + 1, day)
         front = project(week + 1, day + 1)
         left = project(week, day + 1)
-        lift = lambda p: (p[0], p[1] - z)
-        top = points(lift(back), lift(right), lift(front), lift(left))
+        lift = lambda p, h=z: (p[0], p[1] - h)
+        flat = lambda p: lift(p, MIN_HEIGHT)
         color = TOPS[level]
-        shapes.append(f'<polygon fill="{shade(color, 0.55)}" points="{points(left, front, lift(front), lift(left))}"/>')
-        shapes.append(f'<polygon fill="{shade(color, 0.35)}" points="{points(front, right, lift(right), lift(front))}"/>')
-        glow = ' filter="url(#glow)"' if level >= 3 else ""
-        shapes.append(f'<polygon fill="{color}" stroke="#0b1020" stroke-width=".4"{glow} points="{top}"/>')
-        if not count:
-            continue
-        wave_begin = week * WAVE_STEP - WAVE_PERIOD
-        shapes.append(
-            f'<polygon fill="#e0fbff" opacity="0" points="{top}">'
-            f'<animate attributeName="opacity" values="0;.35;0" keyTimes="0;.12;.4" dur="{WAVE_PERIOD}s" '
-            f'begin="{wave_begin:.2f}s" repeatCount="indefinite"/></polygon>'
+        delay = RISE_DELAY + week * RISE_STEP
+        faces = (
+            (shade(color, 0.55), (left, front, lift(front), lift(left)), (left, front, flat(front), flat(left)), ""),
+            (shade(color, 0.35), (front, right, lift(right), lift(front)), (front, right, flat(right), flat(front)), ""),
+            (color, (lift(back), lift(right), lift(front), lift(left)), (flat(back), flat(right), flat(front), flat(left)),
+             ' stroke="#0b1020" stroke-width=".4"' + (' filter="url(#glow)"' if level >= 3 else "")),
         )
-        if (week, day) in arrival:
-            moment = arrival[(week, day)]
+        for fill, full, start, extra in faces:
+            if level:
+                shapes.append(rising_polygon(fill, points(*start), points(*full), delay, extra))
+            else:
+                shapes.append(f'<polygon fill="{fill}"{extra} points="{points(*full)}"/>')
+        if level:
             shapes.append(
-                f'<polygon fill="{SNAKE_COLOR}" opacity="0" points="{top}">'
-                f'<animate attributeName="opacity" values="0;0;1;0;0" '
-                f'keyTimes="0;{moment:.4f};{min(moment + 0.002, 1):.4f};{min(moment + 0.05, 1):.4f};1" '
-                f'dur="{duration:.1f}s" repeatCount="indefinite"/></polygon>'
+                f'<polygon fill="#e0fbff" opacity="0" points="{points(*faces[2][1])}">'
+                f'<animate attributeName="opacity" values="0;.4;0" keyTimes="0;.1;.35" dur="{WAVE_PERIOD}s" '
+                f'begin="{rise_end + week * WAVE_STEP:.2f}s" repeatCount="indefinite"/></polygon>'
             )
 
-    snake = []
-    for stroke_width, opacity, color, share in ((9, 0.18, SNAKE_COLOR, 1), (5, 0.55, SNAKE_COLOR, 0.7), (2.2, 1, SNAKE_CORE, 0.4)):
-        length = SNAKE_LENGTH * share
-        snake.append(
-            f'<path d="{path}" fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-opacity="{opacity}" '
-            f'stroke-linecap="round" stroke-linejoin="round" '
-            f'stroke-dasharray="{length:.1f} {total_distance - length:.1f}">'
-            f'<animate attributeName="stroke-dashoffset" from="{length:.1f}" to="{length - total_distance:.1f}" '
-            f'dur="{duration:.1f}s" repeatCount="indefinite"/></path>'
-        )
-    snake.append(
-        f'<circle r="3.6" fill="#fff">'
-        f'<animate attributeName="r" values="3;4.6;3" dur="0.8s" repeatCount="indefinite"/>'
-        f'<animateMotion path="{path}" dur="{duration:.1f}s" repeatCount="indefinite"/></circle>'
-    )
+    busiest = sorted((cell for cell, (count, _) in cells.items() if count), key=lambda c: -cells[c][0])[:SPARK_CELLS]
+    sparks = []
+    for index, (week, day) in enumerate(busiest):
+        x, y = project(week + 0.5, day + 0.5, bar_height(*cells[(week, day)], peak))
+        for particle in range(3):
+            begin = rise_end + index * 0.35 + particle * SPARK_PERIOD / 3
+            drift = (particle - 1) * 3
+            sparks.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="1.4" fill="#cffafe" opacity="0">'
+                f'<animate attributeName="cy" values="{y:.1f};{y - 34:.1f}" dur="{SPARK_PERIOD}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
+                f'<animate attributeName="cx" values="{x:.1f};{x + drift:.1f}" dur="{SPARK_PERIOD}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
+                f'<animate attributeName="opacity" values="0;1;0" dur="{SPARK_PERIOD}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
+                f'</circle>'
+            )
 
     total = f"{calendar['totalContributions']:,}"
     return (
@@ -196,12 +147,12 @@ def render(calendar):
         '<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
         '</defs>'
         '<style>text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;fill:#7d8590}'
-        f'.n{{fill:#22d3ee;font-weight:700}}.s{{fill:{SNAKE_COLOR}}}</style>'
-        f'<rect width="100%" height="100%" rx="12" fill="url(#bg)"/>'
+        '.n{fill:#22d3ee;font-weight:700}.s{fill:#ff3df2}</style>'
+        '<rect width="100%" height="100%" rx="12" fill="url(#bg)"/>'
         f'<text x="{MARGIN}" y="{MARGIN + 14}"><tspan class="n">{total}</tspan> contributions '
-        f'<tspan class="s">//</tspan> last 12 months</text>'
+        '<tspan class="s">//</tspan> last 12 months</text>'
         f'{"".join(shapes)}'
-        f'<g filter="url(#glow)">{"".join(snake)}</g>'
+        f'<g filter="url(#glow)">{"".join(sparks)}</g>'
         '</svg>\n'
     )
 
