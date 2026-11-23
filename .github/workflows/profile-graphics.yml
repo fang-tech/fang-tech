@@ -2,7 +2,7 @@ name: Generate profile graphics
 
 on:
   schedule:
-    - cron: "0 */12 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -21,12 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Generate 3D contribution graph
-        uses: yoshi389111/github-profile-3d-contrib@v0.9.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          USERNAME: ${{ github.repository_owner }}
-
       - name: Generate contribution snake
         uses: Platane/snk@v3
         with:
@@ -35,12 +29,23 @@ jobs:
             dist/github-snake.svg
             dist/github-snake-dark.svg?palette=github-dark
 
-      - name: Collect graphics
+      - name: Generate 3D contribution graph
         run: |
           mkdir -p output
-          cp profile-3d-contrib/*.svg dist/*.svg output/
+          cp dist/*.svg output/
+          python3 scripts/contrib_3d.py ${{ github.repository_owner }} output/contrib-3d.svg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload preview
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-graphics
+          path: output
 
       - name: Publish to output branch
+        if: github.ref == 'refs/heads/main'
         uses: crazy-max/ghaction-github-pages@v5
         with:
           target_branch: output
