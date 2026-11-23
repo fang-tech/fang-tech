@@ -36,12 +36,14 @@ jobs:
             dist/github-snake-dark.svg?palette=github-dark
 
       - name: Collect graphics
-        run: cp profile-3d-contrib/*.svg dist/
+        run: |
+          mkdir -p output
+          cp profile-3d-contrib/*.svg dist/*.svg output/
 
       - name: Publish to output branch
         uses: crazy-max/ghaction-github-pages@v5
         with:
           target_branch: output
-          build_dir: dist
+          build_dir: output
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

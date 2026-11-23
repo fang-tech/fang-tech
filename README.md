@@ -38,6 +38,6 @@
 ## 📊 Stats
 
 <p align="center">
-  <img height="165" src="https://github-readme-stats.vercel.app/api?username=fang-tech&show_icons=true&hide_border=true&theme=github_dark" alt="GitHub stats" />
-  <img height="165" src="https://github-readme-stats.vercel.app/api/top-langs/?username=fang-tech&layout=compact&hide_border=true&theme=github_dark" alt="Top languages" />
+  <img height="165" src="https://github-readme-stats.vercel.app/api?username=fang-tech&show_icons=true&hide_border=true&theme=transparent" alt="GitHub stats" />
+  <img height="165" src="https://github-readme-stats.vercel.app/api/top-langs/?username=fang-tech&layout=compact&hide_border=true&theme=transparent" alt="Top languages" />
 </p>
