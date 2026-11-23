@@ -20,17 +20,18 @@ query($login: String!) {
 LEVELS = ["NONE", "FIRST_QUARTILE", "SECOND_QUARTILE", "THIRD_QUARTILE", "FOURTH_QUARTILE"]
 TOPS = ["#161b2e", "#0e7490", "#06b6d4", "#22d3ee", "#a5f3fc"]
 
-WEEK_DX, WEEK_DY = 9, 2
-DAY_DX, DAY_DY = 7, 4.5
-MIN_HEIGHT, MAX_HEIGHT = 1.5, 40
+WEEK_DX, WEEK_DY = 15, 1.2
+DAY_DX, DAY_DY = 4, 6
+MIN_HEIGHT, MAX_HEIGHT = 1.5, 46
 MARGIN = 18
-TITLE_SPACE = 30
+TITLE_SPACE = 22
 
 SNAKE_COLOR = "#ff3df2"
-SNAKE_SEGMENTS = 14
-SNAKE_SPACING = 0.05
-SNAKE_SPEED = 90
-
+SNAKE_CORE = "#ffd6fb"
+SNAKE_LENGTH = 120
+SNAKE_SPEED = 140
+WAVE_PERIOD = 5
+WAVE_STEP = 0.045
 
 def fetch_calendar(login, token):
     request = urllib.request.Request(
@@ -87,6 +88,27 @@ def snake_route(cells):
     return route
 
 
+def cubic_point(p0, c1, c2, p1, t):
+    u = 1 - t
+    return tuple(u ** 3 * a + 3 * u * u * t * b + 3 * u * t * t * c + t ** 3 * d for a, b, c, d in zip(p0, c1, c2, p1))
+
+
+def smooth_path(route_points):
+    count = len(route_points)
+    commands = [f"M{route_points[0][0]:.1f},{route_points[0][1]:.1f}"]
+    distances = [0.0]
+    for i in range(count - 1):
+        before = route_points[i - 1] if i else route_points[-2]
+        start, end = route_points[i], route_points[i + 1]
+        after = route_points[i + 2] if i + 2 < count else route_points[1]
+        c1 = tuple(s + (e - b) / 6 for s, e, b in zip(start, end, before))
+        c2 = tuple(e - (a - s) / 6 for s, e, a in zip(start, end, after))
+        commands.append(f"C{c1[0]:.1f},{c1[1]:.1f} {c2[0]:.1f},{c2[1]:.1f} {end[0]:.1f},{end[1]:.1f}")
+        samples = [cubic_point(start, c1, c2, end, step / 12) for step in range(13)]
+        distances.append(distances[-1] + sum(math.dist(a, b) for a, b in zip(samples, samples[1:])))
+    return " ".join(commands), distances
+
+
 def render(calendar):
     cells = {
         (week, day["weekday"]): (day["contributionCount"], LEVELS.index(day["contributionLevel"]))
@@ -111,15 +133,12 @@ def render(calendar):
 
     route = snake_route(cells)
     route_points = [project(w + 0.5, d + 0.5, heights.get((w, d), MIN_HEIGHT) + 2) for w, d in route]
-    distances = [0.0]
-    for a, b in zip(route_points, route_points[1:]):
-        distances.append(distances[-1] + math.dist(a, b))
+    path, distances = smooth_path(route_points)
     total_distance = distances[-1] or 1
     duration = total_distance / SNAKE_SPEED
-    head_lead = SNAKE_SEGMENTS * SNAKE_SPACING / duration
     arrival = {}
     for cell, distance in zip(route, distances):
-        arrival.setdefault(cell, (distance / total_distance - head_lead) % 1)
+        arrival.setdefault(cell, distance / total_distance)
 
     shapes = []
     for (week, day), (count, level) in sorted(cells.items(), key=lambda c: (c[0][0] + c[0][1], c[0][0])):
@@ -135,25 +154,38 @@ def render(calendar):
         shapes.append(f'<polygon fill="{shade(color, 0.35)}" points="{points(front, right, lift(right), lift(front))}"/>')
         glow = ' filter="url(#glow)"' if level >= 3 else ""
         shapes.append(f'<polygon fill="{color}" stroke="#0b1020" stroke-width=".4"{glow} points="{top}"/>')
-        if count and (week, day) in arrival:
+        if not count:
+            continue
+        wave_begin = week * WAVE_STEP - WAVE_PERIOD
+        shapes.append(
+            f'<polygon fill="#e0fbff" opacity="0" points="{top}">'
+            f'<animate attributeName="opacity" values="0;.35;0" keyTimes="0;.12;.4" dur="{WAVE_PERIOD}s" '
+            f'begin="{wave_begin:.2f}s" repeatCount="indefinite"/></polygon>'
+        )
+        if (week, day) in arrival:
             moment = arrival[(week, day)]
             shapes.append(
                 f'<polygon fill="{SNAKE_COLOR}" opacity="0" points="{top}">'
-                f'<animate attributeName="opacity" values="0;.9;0" calcMode="discrete" '
-                f'keyTimes="0;{moment:.4f};{min(moment + 0.02, 1):.4f}" dur="{duration:.1f}s" repeatCount="indefinite"/>'
-                f'</polygon>'
+                f'<animate attributeName="opacity" values="0;0;1;0;0" '
+                f'keyTimes="0;{moment:.4f};{min(moment + 0.002, 1):.4f};{min(moment + 0.05, 1):.4f};1" '
+                f'dur="{duration:.1f}s" repeatCount="indefinite"/></polygon>'
             )
 
-    path = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in route_points)
     snake = []
-    for segment in reversed(range(SNAKE_SEGMENTS)):
-        radius = 3.4 - 1.8 * segment / SNAKE_SEGMENTS
-        begin = -(SNAKE_SEGMENTS - segment) * SNAKE_SPACING
+    for stroke_width, opacity, color, share in ((9, 0.18, SNAKE_COLOR, 1), (5, 0.55, SNAKE_COLOR, 0.7), (2.2, 1, SNAKE_CORE, 0.4)):
+        length = SNAKE_LENGTH * share
         snake.append(
-            f'<circle r="{radius:.1f}" fill="{SNAKE_COLOR}" opacity="{1 - 0.6 * segment / SNAKE_SEGMENTS:.2f}">'
-            f'<animateMotion path="{path}" dur="{duration:.1f}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
-            f'</circle>'
+            f'<path d="{path}" fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-opacity="{opacity}" '
+            f'stroke-linecap="round" stroke-linejoin="round" '
+            f'stroke-dasharray="{length:.1f} {total_distance - length:.1f}">'
+            f'<animate attributeName="stroke-dashoffset" from="{length:.1f}" to="{length - total_distance:.1f}" '
+            f'dur="{duration:.1f}s" repeatCount="indefinite"/></path>'
         )
+    snake.append(
+        f'<circle r="3.6" fill="#fff">'
+        f'<animate attributeName="r" values="3;4.6;3" dur="0.8s" repeatCount="indefinite"/>'
+        f'<animateMotion path="{path}" dur="{duration:.1f}s" repeatCount="indefinite"/></circle>'
+    )
 
     total = f"{calendar['totalContributions']:,}"
     return (
