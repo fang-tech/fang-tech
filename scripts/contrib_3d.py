@@ -116,9 +116,10 @@ def render(calendar):
         distances.append(distances[-1] + math.dist(a, b))
     total_distance = distances[-1] or 1
     duration = total_distance / SNAKE_SPEED
+    head_lead = SNAKE_SEGMENTS * SNAKE_SPACING / duration
     arrival = {}
     for cell, distance in zip(route, distances):
-        arrival.setdefault(cell, distance / total_distance)
+        arrival.setdefault(cell, (distance / total_distance - head_lead) % 1)
 
     shapes = []
     for (week, day), (count, level) in sorted(cells.items(), key=lambda c: (c[0][0] + c[0][1], c[0][0])):
@@ -134,8 +135,8 @@ def render(calendar):
         shapes.append(f'<polygon fill="{shade(color, 0.35)}" points="{points(front, right, lift(right), lift(front))}"/>')
         glow = ' filter="url(#glow)"' if level >= 3 else ""
         shapes.append(f'<polygon fill="{color}" stroke="#0b1020" stroke-width=".4"{glow} points="{top}"/>')
-        moment = arrival.get((week, day))
-        if count and moment:
+        if count and (week, day) in arrival:
+            moment = arrival[(week, day)]
             shapes.append(
                 f'<polygon fill="{SNAKE_COLOR}" opacity="0" points="{top}">'
                 f'<animate attributeName="opacity" values="0;.9;0" calcMode="discrete" '
