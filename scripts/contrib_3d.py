@@ -119,7 +119,7 @@ def render(calendar):
         if level:
             shapes.append(
                 f'<polygon fill="#e0fbff" opacity="0" points="{points(*faces[2][1])}">'
-                f'<animate attributeName="opacity" values="0;.4;0" keyTimes="0;.1;.35" dur="{WAVE_PERIOD}s" '
+                f'<animate attributeName="opacity" values="0;.4;0;0" keyTimes="0;.1;.35;1" dur="{WAVE_PERIOD}s" '
                 f'begin="{rise_end + week * WAVE_STEP:.2f}s" repeatCount="indefinite"/></polygon>'
             )
 
