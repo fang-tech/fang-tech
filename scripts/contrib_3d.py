@@ -9,7 +9,7 @@ query($login: String!) {
     contributionsCollection {
       contributionCalendar {
         totalContributions
-        weeks { contributionDays { contributionCount contributionLevel } }
+        weeks { contributionDays { contributionCount contributionLevel weekday } }
       }
     }
   }
@@ -66,9 +66,9 @@ def points(*corners):
 
 def render(calendar):
     days = [
-        (week, weekday, day["contributionCount"], LEVELS.index(day["contributionLevel"]))
+        (week, day["weekday"], day["contributionCount"], LEVELS.index(day["contributionLevel"]))
         for week, entry in enumerate(calendar["weeks"])
-        for weekday, day in enumerate(entry["contributionDays"])
+        for day in entry["contributionDays"]
     ]
     counts = sorted(count for _, _, count, _ in days if count)
     peak = counts[int(len(counts) * 0.95)] if counts else 1
