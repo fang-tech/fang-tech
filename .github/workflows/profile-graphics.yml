@@ -21,18 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Generate contribution snake
-        uses: Platane/snk@v3
-        with:
-          github_user_name: ${{ github.repository_owner }}
-          outputs: |
-            dist/github-snake.svg
-            dist/github-snake-dark.svg?palette=github-dark
-
       - name: Generate 3D contribution graph
         run: |
           mkdir -p output
-          cp dist/*.svg output/
           python3 scripts/contrib_3d.py ${{ github.repository_owner }} output/contrib-3d.svg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
